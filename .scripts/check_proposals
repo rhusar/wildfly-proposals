@@ -32,33 +32,55 @@ class MetadataChecker
   def check pr_number, front_matter
     STDERR.puts "Check front matter #{front_matter}"
     errors = []
+    # Read the labels once and only add or remove what actually needs to
+    # change, so that unchanged labels are not removed and re-added on every run.
+    labels = current_labels(pr_number)
     categories_errors = check_categories(pr_number, front_matter)
     if categories_errors.length() > 0
       errors << categories_errors
-      system("gh pr edit #{pr_number} --add-label invalid-categories")
-    else 
-      system("gh pr edit #{pr_number} --remove-label invalid-categories")
+      add_label(pr_number, labels, "invalid-categories")
+    else
+      remove_label(pr_number, labels, "invalid-categories")
     end
     issue_errors = check_issue(pr_number, front_matter)
     if issue_errors.length() > 0
       errors << issue_errors
-      system("gh pr edit #{pr_number} --add-label missing-issue")
+      add_label(pr_number, labels, "missing-issue")
     else
-      system("gh pr edit #{pr_number} --remove-label missing-issue")
+      remove_label(pr_number, labels, "missing-issue")
     end
     begin
       stability_level, err = check_stability_level(pr_number, front_matter)
-      system("gh pr edit #{pr_number} --remove-label invalid-stability-level")
+      remove_label(pr_number, labels, "invalid-stability-level")
       # remove any previous stability-levels
-      @stability_levels.map { | level | system("gh pr edit #{pr_number} --remove-label stability-level/#{level}") }
-      system("gh pr edit #{pr_number} --add-label stability-level/#{stability_level}")
+      @stability_levels.each do | level |
+        remove_label(pr_number, labels, "stability-level/#{level}") unless level == stability_level
+      end
+      add_label(pr_number, labels, "stability-level/#{stability_level}")
     rescue => error
       errors << error.message
-      system("gh pr edit #{pr_number} --add-label invalid-stability-level")
-      @stability_levels.map { | level | system("gh pr edit #{pr_number} --remove-label stability-level/#{level}") }
+      add_label(pr_number, labels, "invalid-stability-level")
+      @stability_levels.each { | level | remove_label(pr_number, labels, "stability-level/#{level}") }
     end
 
     errors
+  end
+
+  def current_labels pr_number
+    output = `gh pr view #{pr_number} --json labels --jq '.labels[].name'`
+    output.split("\n").map(&:strip).reject(&:empty?)
+  end
+
+  def add_label pr_number, labels, label
+    return if labels.include? label
+    system("gh pr edit #{pr_number} --add-label #{label}")
+    labels << label
+  end
+
+  def remove_label pr_number, labels, label
+    return unless labels.include? label
+    system("gh pr edit #{pr_number} --remove-label #{label}")
+    labels.delete label
   end
 
   def check_categories pr_number, front_matter
