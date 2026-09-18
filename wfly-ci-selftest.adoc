@@ -1,0 +1,9 @@
+---
+categories:
+  - clustering
+stability-level: community
+issue: https://github.com/wildfly/wildfly-proposals/issues/1
+---
+= CI self-test proposal
+
+Temporary file used to verify the Check Proposals workflow. Not for merging.
