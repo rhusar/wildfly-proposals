@@ -29,38 +29,45 @@ class MetadataChecker
     @stability_levels = ["experimental", "preview", "community", "default"]
   end
 
-  def check pr_number, front_matter
+  def check pr_number, front_matter, apply_labels
     STDERR.puts "Check front matter #{front_matter}"
     errors = []
-    # Read the labels once and only add or remove what actually needs to
-    # change, so that unchanged labels are not removed and re-added on every run.
-    labels = current_labels(pr_number)
+    to_add = []
+    to_remove = []
     categories_errors = check_categories(pr_number, front_matter)
     if categories_errors.length() > 0
       errors << categories_errors
-      add_label(pr_number, labels, "invalid-categories")
+      to_add << "invalid-categories"
     else
-      remove_label(pr_number, labels, "invalid-categories")
+      to_remove << "invalid-categories"
     end
     issue_errors = check_issue(pr_number, front_matter)
     if issue_errors.length() > 0
       errors << issue_errors
-      add_label(pr_number, labels, "missing-issue")
+      to_add << "missing-issue"
     else
-      remove_label(pr_number, labels, "missing-issue")
+      to_remove << "missing-issue"
     end
     begin
       stability_level, err = check_stability_level(pr_number, front_matter)
-      remove_label(pr_number, labels, "invalid-stability-level")
+      to_remove << "invalid-stability-level"
       # remove any previous stability-levels
       @stability_levels.each do | level |
-        remove_label(pr_number, labels, "stability-level/#{level}") unless level == stability_level
+        to_remove << "stability-level/#{level}" unless level == stability_level
       end
-      add_label(pr_number, labels, "stability-level/#{stability_level}")
+      to_add << "stability-level/#{stability_level}"
     rescue => error
       errors << error.message
-      add_label(pr_number, labels, "invalid-stability-level")
-      @stability_levels.each { | level | remove_label(pr_number, labels, "stability-level/#{level}") }
+      to_add << "invalid-stability-level"
+      @stability_levels.each { | level | to_remove << "stability-level/#{level}" }
+    end
+
+    if apply_labels
+      # Read the labels once and only add or remove what actually needs to
+      # change, so that unchanged labels are not removed and re-added on every run.
+      labels = current_labels(pr_number)
+      to_remove.each { | label | remove_label(pr_number, labels, label) }
+      to_add.each { | label | add_label(pr_number, labels, label) }
     end
 
     errors
@@ -129,13 +136,21 @@ ARGV.shift
 
 puts "Checking PR #{pr_number}"
 
+# Every changed file is validated, but the labels of the pull request are only
+# derived from the proposals it adds, when it adds any. Promoting a feature adds
+# a new proposal and also edits the promoted proposal to add 'promoted-by', and
+# the labels must reflect the new proposal rather than the last file checked.
+new_files = (ENV['NEW_PROPOSAL_FILES'] || '').split("\n").map(&:strip).reject(&:empty?)
+label_files = new_files.empty? ? ARGV : new_files
+puts "Deriving labels from: #{label_files.join(' ')}"
+
 # Read and print the content of each file passed as arguments
 ARGV.each do |file|
 
   begin
     content = File.read(file)
     front_matter = front_matter_extractor.process content.split("\n")
-    errors = metadata_checker.check pr_number, front_matter
+    errors = metadata_checker.check pr_number, front_matter, label_files.include?(file)
     if errors.length() > 0
       check_succeeds = false
       puts "❌ #{file}"
